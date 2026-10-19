@@ -1,78 +1,74 @@
 # Copilot COBOL Account App (Go)
 
-This project is a Go port of the Copilot COBOL Account App, a small account-management application. The original was written in COBOL with no framework. All 3 original modules were translated into Go using the standard toolchain.
+This is an interactive, menu-driven console program that manages a single account balance. It was migrated from three COBOL programs (`MainProgram`, `Operations` and `DataProgram`) to Go.
 
-> **Status:** The project builds, and the target unit tests (`go test ./...`) pass. Whether it **behaves like the original COBOL program has not been established**. The behavioral comparison was inconclusive, and no request or interaction has been confirmed to match the original. The 93% figure in the migration report is the migration model's self-assessed confidence. It is not a measured result.
+The program reads menu choices from standard input and writes results to standard output. The balance is held in process memory only. It starts at a fixed initial balance (`money.InitialBalance`) and resets each time the process starts, the same way the COBOL run unit did. No database is used.
+
+> **Verification status**
+>
+> | Check | Result |
+> |---|---|
+> | Build | passed |
+> | Unit tests (`go test ./...`) | passed |
+> | Behaviour compared with the original COBOL program | **inconclusive** |
+>
+> The migration tool reported 93% confidence. That figure is the model's own estimate, not a measured result. Behavioural equivalence with the COBOL original has **not** been confirmed. See [Manual review required](#manual-review-required).
 
 ## Tech stack
 
-- **Language:** Go, standard library and toolchain (`go build`, `go test`)
-- **Module definition:** `go.mod`
-- **Toolchain used during migration:** Go 1.27 (the `golang:1.27-alpine` image)
-- **Database:** a PostgreSQL instance was available during migration, and `DATABASE_URL` is listed as required (see [Database](#database))
+- **Language:** Go. The module `accountsystem` declares `go 1.22` as its minimum version.
+- **Libraries:** Go standard library only (`context`, `os/signal`, `sync`, etc.).
+- **Storage:** in-memory, through a mutex-protected `store.MemoryStore`.
+- **Interface:** interactive terminal program (stdin/stdout). It is not an HTTP server.
 
 ## Prerequisites
 
-- Go 1.27
-- A reachable database for `DATABASE_URL`. During migration this was a PostgreSQL instance.
+- Go toolchain. The migration was built and tested with the toolchain from the `golang:1.27-alpine` image (Go 1.27). Any version ≥ 1.22 satisfies `go.mod`.
+- No database or other external service is required.
 
 ## Getting started
 
-Run these steps in order from the root of a fresh clone.
+Run these steps from the root of a fresh clone, in this order.
 
-### 1. Install dependencies and build
+### 1. Download dependencies and build
 
 ```sh
-mkdir -p bin
-go mod download
-go build -o bin/app ./cmd/app
+mkdir -p bin && go mod download && go build -o bin/app ./cmd/app
 ```
 
 This builds the `cmd/app` entry point into `bin/app`.
 
-### 2. Tidy module dependencies
+### 2. Environment setup
 
-These commands were run during migration after install and before running. The migration ran `go mod tidy` twice. The second run is idempotent, but both are listed here to mirror what succeeded.
+No environment variables are needed to run the program. See [Environment variables](#environment-variables) for the variables listed in the migration configuration.
 
-```sh
-go mod tidy
-go mod tidy
-```
+### 3. Database setup
 
-### 3. Configure the environment
+None. The balance is kept in memory, and no schema or migration step exists.
 
-```sh
-export DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/DBNAME?sslmode=disable"
-export PORT=8080
-export JWT_SECRET="replace-with-a-long-random-secret"
-```
-
-The values above are placeholders. See [Environment variables](#environment-variables).
-
-### 4. Database setup
-
-No database setup commands (schema creation, migrations, seed data) were recorded during migration. If the application needs a schema, you must create it manually. See [Manual review required](#manual-review-required).
-
-### 5. Run
-
-No run command was recorded during migration. The build step produces `bin/app`, and starting that binary is the expected way to run the app:
+### 4. Run
 
 ```sh
 ./bin/app
 ```
 
-This step has not been verified. The migration report states the app listens on **port 8080**, reachable at `http://localhost:8080`. However, the code also contains an interactive CLI menu (`internal/cli/menu.go`), so the actual mode of operation needs confirmation.
+The program does not listen on any port, even though the migration configuration mentions port 8080. It is an interactive console that shows a menu and waits for a choice on standard input:
 
-**First request to try:** none. No request has been verified to produce the same result as the original application.
+- Enter the number of a menu option and press Enter.
+- Choice `4` exits with the message `Exiting the program. Goodbye!` and status 0.
+- Sending end-of-input (Ctrl+D) at the menu prompt also exits cleanly (see [Migration notes](#migration-notes)).
 
-## Database
+**First request to try:** none has been verified against the original program. Because this is not an HTTP service, there is no request to send. Start the binary and use the menu.
 
-| | Database |
-|---|---|
-| Original (COBOL) | Not recorded in the migration output |
-| Migrated (Go) | `DATABASE_URL` is required. A PostgreSQL instance was provided during migration. |
+#### Alternative entry point: `cmd/accountsystem`
 
-The migration output does not record a database change, its reason, or whether `internal/store/store.go` actually connects to PostgreSQL.
+A second entry point, `cmd/accountsystem/main.go`, runs the same console with one difference. It handles Ctrl+C (SIGINT) and exits with status `130` when interrupted. `cmd/app` does not install a signal handler.
+
+This entry point was not built or run during migration. It can be started with:
+
+```sh
+go run ./cmd/accountsystem
+```
 
 ## Running tests
 
@@ -80,70 +76,87 @@ The migration output does not record a database change, its reason, or whether `
 go test ./...
 ```
 
-This passed during migration. The only test file present is `internal/money/money_test.go`, so test coverage is limited to the `money` package.
+The only test file in the project is `internal/money/money_test.go`. The `account`, `cli` and `store` packages have no tests.
 
 ## Environment variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | Connection string for the application database (PostgreSQL during migration). |
-| `PORT` | Yes | Port the application listens on. The migration report states `8080`. |
-| `JWT_SECRET` | Yes | Secret used for JWT signing/verification. |
+The migration configuration listed the variables below. **None of them are read by the entry points (`cmd/app/main.go`, `cmd/accountsystem/main.go`) or by `internal/store/store.go`.** The program runs without them.
 
-The migration flagged all three variables as needed. How each one is consumed in code has not been documented.
+| Variable | Listed purpose | Used by the current code? |
+|---|---|---|
+| `DATABASE_URL` | Database connection string | No. Storage is in-memory only. |
+| `PORT` | HTTP listen port (8080 mentioned) | No. The program does not listen on a port. |
+| `JWT_SECRET` | Token signing secret | No. There is no authentication. |
+
+These are leftovers from a generic sandbox configuration: the code never reads them, so they can be omitted from any deployment configuration.
 
 ## Architecture overview
 
 ```
 cmd/
-  accountsystem/main.go   # entry point (not built by the recorded install step)
-  app/main.go             # entry point built into bin/app
+  app/main.go            Entry point: wires store → service → CLI; exits 1 on error
+  accountsystem/main.go  Same wiring, plus SIGINT handling (exit 130)
 internal/
-  account/service.go      # account operations (business logic)
-  cli/menu.go             # interactive menu / user interaction
-  money/money.go          # monetary value handling
-  money/money_test.go     # unit tests for money
-  store/store.go          # persistence / data storage
-go.mod
+  money/money.go         Amount type (integer cents), InitialBalance, range validation
+  money/money_test.go    Unit tests for the money package
+  store/store.go         BalanceStore interface and in-memory MemoryStore (COBOL DataProgram)
+  account/service.go     Account operations built on a BalanceStore
+  cli/menu.go            Interactive menu loop over stdin/stdout
+go.mod                   Module "accountsystem", go 1.22
 ```
 
-The descriptions below are inferred from package and file names:
+### Startup flow (both entry points)
 
-- **`cmd/app`** and **`cmd/accountsystem`** are two separate entry points. Only `cmd/app` is built by the recorded install step. The role of `cmd/accountsystem` relative to `cmd/app` has not been documented.
-- **`internal/account`** holds the account service, which most likely corresponds to the original operations logic.
-- **`internal/cli`** handles the menu-driven interaction carried over from the original COBOL program flow.
-- **`internal/money`** is an isolated package for money arithmetic. It is the only package with unit tests.
-- **`internal/store`** is the storage layer for account data.
+1. `store.NewMemoryStore(money.InitialBalance)` creates the balance store.
+2. `account.NewService(balances)` builds the service on top of it.
+3. `cli.Run(ctx, os.Stdin, os.Stdout, svc)` runs the menu loop until the user exits.
+
+### Key details of `internal/store`
+
+- **Interface.** `BalanceStore` has `Read(ctx)` and `Write(ctx, amount)`. `MemoryStore` implements it and is safe for concurrent use.
+- **Range check.** `Write` rejects any amount outside `0 .. 999999.99`, the range of COBOL `PIC 9(6)V99`. It returns `ErrOutOfRange` and leaves the stored balance unchanged.
+- **COBOL call compatibility.** `store.Call(ctx, s, op, &balance)` reproduces the COBOL `CALL 'DataProgram' USING op, balance` interface:
+  - `op` is treated like `PIC X(6)`: it is truncated to 6 characters and trailing spaces are trimmed.
+  - `"READ"` copies the stored balance into `*balance`.
+  - `"WRITE"` stores `*balance`.
+  - Any other code is a no-op that returns `nil`, as in the original.
+- **Money representation.** Amounts are integer cents (the `Amount` type in `internal/money/money.go`), not floating point.
 
 ## Migration notes
 
-- **Source → target:** COBOL (no framework) → Go (standard toolchain).
-- **Modules migrated:** 3 of 3.
-- **Recorded changes from the original:** none. The migration did not record any intentional behavioral or structural changes, or reasons for them. The differences below are visible from the project structure but were not documented:
-  - The app requires `DATABASE_URL`, `PORT`, and `JWT_SECRET`, and is reported to listen on port 8080.
-  - It has two entry points under `cmd/`.
+Changes from the original COBOL codebase:
 
-  Treat these as unexplained until reviewed.
-- **Untranslated source files:** none.
+1. **EOF at the menu prompt now exits cleanly.**
+   - *Change:* end of input at the menu prompt is treated as choice 4. The program prints `Exiting the program. Goodbye!` and exits with status 0.
+   - *Original behaviour:* GnuCOBOL leaves `USER-CHOICE` unchanged on EOF and loops forever.
+   - *Reason:* this was a deliberate deviation in the migration plan. The original's EOF behaviour is an infinite loop, so the Go version ends the session cleanly instead.
+
+2. **Explicit range validation on balance writes.**
+   - *Change:* `Write` on `MemoryStore` in `internal/store/store.go` returns `ErrOutOfRange` for values below 0 or above 999999.99.
+   - *Original behaviour:* the caller's field and the storage field shared the same `PIC 9(6)V99`, so an out-of-range value could never reach DataProgram.
+   - *Reason:* Go callers can pass any value, so the value is validated rather than silently truncated. This is marked with a `MIGRATION_NOTE` in `internal/store/store.go`.
+
+### Storage
+
+Storage is unchanged in kind. The original kept the balance in DataProgram's `WORKING-STORAGE`, and the Go version keeps it in process memory. Neither version persists data between runs.
 
 ## Known limitations
 
-- **Behavioral parity is unconfirmed.** The comparison against the original COBOL program was inconclusive, and no requests or interactions are confirmed to match.
-- **No run command was recorded.** The `./bin/app` step above is the expected invocation, but it was not exercised during migration.
-- **No database setup was recorded.** Schema and seed requirements are unknown.
-- **Test coverage is minimal.** Only `internal/money` has tests. `internal/account`, `internal/cli`, and `internal/store` have none.
-- **The mode of operation is unclear.** The report says the app listens on 8080, but the code includes a CLI menu.
+- **Behavioural equivalence with the COBOL original is unconfirmed.** The comparison run was inconclusive.
+- **No persistence.** The balance resets to `money.InitialBalance` on every start, matching the original.
+- **Limited test coverage.** Only `internal/money` has unit tests. `internal/account`, `internal/cli` and `internal/store` are untested.
+- **Unused configuration.** The listed environment variables (`DATABASE_URL`, `PORT`, `JWT_SECRET`) and the port 8080 reference are not used by the code.
+- **Two entry points.** `cmd/app` and `cmd/accountsystem` duplicate the same wiring and differ only in signal handling. Only `cmd/app` was built during migration.
 
 ## Manual review required
 
-**Low-confidence modules.** The Go code translated from these original modules needs careful line-by-line comparison against the COBOL source:
+The migration flagged these COBOL modules as low confidence: `Operations` and `MainProgram`. Verify the Go code that replaces them against the original.
 
-- The original operations module: most likely maps to `internal/account/service.go` and `internal/money/money.go`.
-- The original main module: most likely maps to `cmd/app/main.go`, `cmd/accountsystem/main.go`, and `internal/cli/menu.go`.
-
-**Additional files to verify:**
-
-- `internal/store/store.go`: confirm how data is persisted, whether it uses `DATABASE_URL`, and what schema it expects.
-- `cmd/app/main.go` and `cmd/accountsystem/main.go`: determine which is the intended entry point, whether it serves HTTP on `PORT` or runs an interactive menu, and where `JWT_SECRET` is used.
-- `internal/money/money.go`: confirm that rounding and precision match COBOL fixed-point (`PIC`) semantics for balances, credits, and debits.
-- `go.mod`: confirm the Go version and dependencies after the `go mod tidy` runs.
+- [ ] **`internal/account/service.go`** (from COBOL `Operations`): check each operation for:
+  - correct balance arithmetic in cents;
+  - handling of amounts that would make the balance negative or exceed 999999.99;
+  - matching any insufficient-funds behaviour in the original.
+- [ ] **`internal/cli/menu.go`** (from COBOL `MainProgram`): check that menu text, prompts, output formatting of amounts, and handling of invalid choices match the original. Confirm the EOF-as-choice-4 deviation is acceptable.
+- [ ] **`internal/money/money.go`**: confirm `InitialBalance` equals the original COBOL initial value and that display formatting matches COBOL's edited output.
+- [ ] **`cmd/app/main.go` vs `cmd/accountsystem/main.go`**: decide which entry point to keep, and remove or document the other.
+- [ ] **Behavioural comparison**: run the original COBOL program and `./bin/app` side by side with the same input sequences and compare their output, since the automated comparison was inconclusive.
