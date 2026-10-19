@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"migrated-app/internal/account"
-	"migrated-app/internal/cli"
-	"migrated-app/internal/store"
+	"accountsystem/internal/account"
+	"accountsystem/internal/cli"
+	"accountsystem/internal/money"
+	"accountsystem/internal/store"
 )
 
 // run executes the program with its command-line arguments and returns
@@ -17,7 +18,7 @@ func run(args []string) int {
 
 	ctx := context.Background()
 
-	balances := store.NewMemoryStore()
+	balances := store.NewMemoryStore(money.InitialBalance)
 	svc, err := account.NewService(balances)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
