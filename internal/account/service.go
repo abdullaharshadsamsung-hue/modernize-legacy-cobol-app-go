@@ -3,8 +3,8 @@
 // DEBIT (subtract an amount when funds are sufficient).
 //
 // The core methods (Balance, Credit, Debit) are I/O-free and operate on
-// integer cents. Run reproduces the original console dialogue for callers
-// that still dispatch on a 6-character operation code.
+// money.Amount values. Run reproduces the original console dialogue for
+// callers that still dispatch on a 6-character operation code.
 package account
 
 import (
@@ -19,9 +19,6 @@ import (
 	"accountsystem/internal/store"
 )
 
-// maxBalanceCents is the largest value PIC 9(6)V99 can hold (999999.99).
-const maxBalanceCents = int64(money.Max)
-
 // Operation codes, matching the COBOL PASSED-OPERATION PIC X(6) values
 // (trailing spaces are insignificant).
 const (
@@ -29,9 +26,6 @@ const (
 	OpCredit = "CREDIT"
 	OpDebit  = "DEBIT"
 )
-
-// picModulus is 10^8: PIC 9(6)V99 holds 8 decimal digits of cents.
-const picModulus = maxBalanceCents + 1
 
 // ErrInsufficientFunds is returned by Debit when the balance is lower than
 // the requested amount. The stored balance is left unchanged.
@@ -50,7 +44,7 @@ type Service struct {
 
 	// lastAmount mirrors the non-INITIAL WORKING-STORAGE field AMOUNT,
 	// which keeps its value between calls (relevant when ACCEPT hits EOF).
-	lastAmount int64
+	lastAmount money.Amount
 }
 
 // NewService returns a Service backed by s.
@@ -61,8 +55,8 @@ func NewService(s store.BalanceStore) (*Service, error) {
 	return &Service{store: s}, nil
 }
 
-// Balance returns the current balance in cents (COBOL TOTAL).
-func (svc *Service) Balance(ctx context.Context) (int64, error) {
+// Balance returns the current balance (COBOL TOTAL).
+func (svc *Service) Balance(ctx context.Context) (money.Amount, error) {
 	bal, err := svc.store.Read(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("account: read balance: %w", err)
@@ -70,13 +64,13 @@ func (svc *Service) Balance(ctx context.Context) (int64, error) {
 	return bal, nil
 }
 
-// Credit adds amount cents to the balance and returns the new balance
+// Credit adds amount to the balance and returns the new balance
 // (COBOL CREDIT).
 //
 // The addition mirrors COBOL "ADD AMOUNT TO FINAL-BALANCE" without
 // ON SIZE ERROR: overflowing digits are silently truncated, so
 // 999999.99 + 1.00 yields 000000.99.
-func (svc *Service) Credit(ctx context.Context, amount int64) (int64, error) {
+func (svc *Service) Credit(ctx context.Context, amount money.Amount) (money.Amount, error) {
 	if err := validAmount(amount); err != nil {
 		return 0, err
 	}
@@ -84,18 +78,18 @@ func (svc *Service) Credit(ctx context.Context, amount int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	bal = addTruncating(bal, amount)
+	bal = bal.Add(amount)
 	if err := svc.store.Write(ctx, bal); err != nil {
 		return 0, fmt.Errorf("account: write balance: %w", err)
 	}
 	return bal, nil
 }
 
-// Debit subtracts amount cents from the balance when the balance is at
-// least amount, and returns the new balance (COBOL DEBIT). Otherwise it
-// returns ErrInsufficientFunds together with the unchanged balance and
-// does not write.
-func (svc *Service) Debit(ctx context.Context, amount int64) (int64, error) {
+// Debit subtracts amount from the balance when the balance is at least
+// amount, and returns the new balance (COBOL DEBIT). Otherwise it returns
+// ErrInsufficientFunds together with the unchanged balance and does not
+// write.
+func (svc *Service) Debit(ctx context.Context, amount money.Amount) (money.Amount, error) {
 	if err := validAmount(amount); err != nil {
 		return 0, err
 	}
@@ -106,7 +100,7 @@ func (svc *Service) Debit(ctx context.Context, amount int64) (int64, error) {
 	if bal < amount {
 		return bal, ErrInsufficientFunds
 	}
-	bal -= amount
+	bal = bal.Sub(amount)
 	if err := svc.store.Write(ctx, bal); err != nil {
 		return 0, fmt.Errorf("account: write balance: %w", err)
 	}
@@ -130,7 +124,7 @@ func (svc *Service) Run(ctx context.Context, op string, in *bufio.Reader, out io
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(out, "Current balance: %s\n", FormatPIC(bal))
+		_, err = fmt.Fprintf(out, "Current balance: %s\n", bal)
 		return err
 
 	case OpCredit:
@@ -142,7 +136,7 @@ func (svc *Service) Run(ctx context.Context, op string, in *bufio.Reader, out io
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(out, "Amount credited. New balance: %s\n", FormatPIC(bal))
+		_, err = fmt.Fprintf(out, "Amount credited. New balance: %s\n", bal)
 		return err
 
 	case OpDebit:
@@ -158,56 +152,15 @@ func (svc *Service) Run(ctx context.Context, op string, in *bufio.Reader, out io
 		case err != nil:
 			return err
 		}
-		_, err = fmt.Fprintf(out, "Amount debited. New balance: %s\n", FormatPIC(bal))
+		_, err = fmt.Fprintf(out, "Amount debited. New balance: %s\n", bal)
 		return err
 	}
 	return fmt.Errorf("%w: %q", ErrUnknownOperation, op)
 }
 
-// FormatPIC renders cents the way COBOL DISPLAYs an unsigned PIC 9(6)V99
-// field: eight zero-padded digits with no decimal point (1000.00 -> "00100000").
-func FormatPIC(cents int64) string {
-	return fmt.Sprintf("%08d", ((cents%picModulus)+picModulus)%picModulus)
-}
-
-// ParseAmount converts console input to cents following ACCEPT into an
-// unsigned PIC 9(6)V99 field. It never fails: surrounding blanks and any
-// sign are ignored, the integer part keeps its low-order six digits, the
-// fraction keeps two digits (truncated), and non-numeric input yields 0.
-//
-// MIGRATION_NOTE: GnuCOBOL's exact ACCEPT conversion for malformed input is
-// runtime-dependent; this approximation must be checked against the golden
-// transcripts captured from the original program.
-func ParseAmount(s string) int64 {
-	s = strings.TrimSpace(s)
-	s = strings.TrimLeft(s, "+-")
-	s = strings.TrimRight(s, "+-")
-	intPart, fracPart, _ := strings.Cut(s, ".")
-	if intPart == "" && fracPart == "" {
-		return 0
-	}
-	for _, part := range []string{intPart, fracPart} {
-		for _, r := range part {
-			if r < '0' || r > '9' {
-				return 0
-			}
-		}
-	}
-	var whole int64
-	if len(intPart) > 6 {
-		intPart = intPart[len(intPart)-6:]
-	}
-	for _, r := range intPart {
-		whole = whole*10 + int64(r-'0')
-	}
-	fracPart += "00"
-	frac := int64(fracPart[0]-'0')*10 + int64(fracPart[1]-'0')
-	return whole*100 + frac
-}
-
 // accept reads one line from in into AMOUNT. On EOF with no data the
 // previous AMOUNT value is kept, as with a non-INITIAL COBOL program.
-func (svc *Service) accept(in *bufio.Reader) int64 {
+func (svc *Service) accept(in *bufio.Reader) money.Amount {
 	if in == nil {
 		return svc.lastAmount
 	}
@@ -215,19 +168,13 @@ func (svc *Service) accept(in *bufio.Reader) int64 {
 	if err != nil && line == "" {
 		return svc.lastAmount
 	}
-	svc.lastAmount = ParseAmount(line)
+	svc.lastAmount = money.ParseAccept(line)
 	return svc.lastAmount
 }
 
-// addTruncating adds two PIC 9(6)V99 values, discarding high-order digits
-// that do not fit (COBOL ADD without ON SIZE ERROR).
-func addTruncating(a, b int64) int64 {
-	return (a + b) % picModulus
-}
-
-func validAmount(cents int64) error {
-	if cents < 0 || cents > store.MaxBalanceCents {
-		return fmt.Errorf("%w: %d cents", ErrInvalidAmount, cents)
+func validAmount(a money.Amount) error {
+	if !a.Valid() {
+		return fmt.Errorf("%w: %d cents", ErrInvalidAmount, int64(a))
 	}
 	return nil
 }
