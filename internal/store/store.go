@@ -1,9 +1,10 @@
 // Package store holds the account balance that the original COBOL
 // DataProgram subprogram kept in WORKING-STORAGE.
 //
-// The balance lives in process memory only: it starts at 1000.00 and
-// resets whenever the process restarts, exactly like the COBOL run unit.
-// No database is involved, so no schema is created.
+// The balance lives in process memory only: it starts at the configured
+// initial balance (money.InitialBalance, 1000.00) and resets whenever the
+// process restarts, exactly like the COBOL run unit. No database is
+// involved, so no schema is created.
 package store
 
 import (
@@ -12,44 +13,38 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"accountsystem/internal/money"
 )
-
-// InitialBalanceCents is the starting balance (1000.00), from
-// "STORAGE-BALANCE PIC 9(6)V99 VALUE 1000.00".
-const InitialBalanceCents int64 = 100000
-
-// MaxBalanceCents is the largest value PIC 9(6)V99 can hold (999999.99).
-const MaxBalanceCents int64 = 99999999
 
 // ErrOutOfRange is returned when a balance to be written cannot be
 // represented by PIC 9(6)V99 (negative or greater than 999999.99).
 var ErrOutOfRange = errors.New("store: balance out of range for PIC 9(6)V99")
 
 // BalanceStore reads and writes the single stored account balance.
-// Amounts are expressed in integer cents.
 type BalanceStore interface {
-	// Read returns the stored balance in cents.
-	Read(ctx context.Context) (int64, error)
-	// Write replaces the stored balance with cents.
-	Write(ctx context.Context, cents int64) error
+	// Read returns the stored balance.
+	Read(ctx context.Context) (money.Amount, error)
+	// Write replaces the stored balance.
+	Write(ctx context.Context, amount money.Amount) error
 }
 
 // MemoryStore is a concurrency-safe, in-memory BalanceStore.
 type MemoryStore struct {
 	mu      sync.Mutex
-	balance int64
+	balance money.Amount
 }
 
 // Compile-time check that MemoryStore satisfies BalanceStore.
 var _ BalanceStore = (*MemoryStore)(nil)
 
-// NewMemoryStore returns a MemoryStore initialised to 1000.00.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{balance: InitialBalanceCents}
+// NewMemoryStore returns a MemoryStore initialised to initial.
+func NewMemoryStore(initial money.Amount) *MemoryStore {
+	return &MemoryStore{balance: initial}
 }
 
 // Read returns the stored balance (COBOL 'READ': MOVE STORAGE-BALANCE TO BALANCE).
-func (s *MemoryStore) Read(ctx context.Context) (int64, error) {
+func (s *MemoryStore) Read(ctx context.Context) (money.Amount, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -58,23 +53,23 @@ func (s *MemoryStore) Read(ctx context.Context) (int64, error) {
 	return s.balance, nil
 }
 
-// Write stores cents as the new balance (COBOL 'WRITE': MOVE BALANCE TO
+// Write stores amount as the new balance (COBOL 'WRITE': MOVE BALANCE TO
 // STORAGE-BALANCE). Values outside 0..999999.99 are rejected with
 // ErrOutOfRange and leave the stored balance unchanged.
 //
 // MIGRATION_NOTE: in COBOL the caller's field shared the same PIC, so an
 // out-of-range value could never reach this point. Go callers can pass any
-// int64, so it is validated explicitly rather than silently truncated.
-func (s *MemoryStore) Write(ctx context.Context, cents int64) error {
+// value, so it is validated explicitly rather than silently truncated.
+func (s *MemoryStore) Write(ctx context.Context, amount money.Amount) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if cents < 0 || cents > MaxBalanceCents {
-		return fmt.Errorf("%w: %d cents", ErrOutOfRange, cents)
+	if !amount.Valid() {
+		return fmt.Errorf("%w: %d cents", ErrOutOfRange, int64(amount))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.balance = cents
+	s.balance = amount
 	return nil
 }
 
@@ -91,7 +86,7 @@ const (
 // trailing spaces are ignored. "READ" copies the stored balance into
 // *balance; "WRITE" stores *balance. Any other code does nothing and
 // returns nil, as in the original.
-func Call(ctx context.Context, s BalanceStore, op string, balance *int64) error {
+func Call(ctx context.Context, s BalanceStore, op string, balance *money.Amount) error {
 	if s == nil {
 		return errors.New("store: nil BalanceStore")
 	}
