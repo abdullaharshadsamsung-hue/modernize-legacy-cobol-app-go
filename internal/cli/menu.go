@@ -55,15 +55,16 @@ var menuLines = []string{
 }
 
 // ParseChoice converts one input line into the value ACCEPT would store in
-// "USER-CHOICE PIC 9". It delegates to money.ParseChoice: surrounding
-// blanks are ignored and the low-order digit of numeric input is kept
-// (so "12" becomes 2); non-numeric input yields 0, an invalid choice.
-//
-// MIGRATION_NOTE: GnuCOBOL's ACCEPT conversion of multi-character or
-// malformed input into a PIC 9 field is runtime-dependent; this
-// approximation must be verified against the golden transcripts.
+// "USER-CHOICE PIC 9". Surrounding blanks are ignored and, as GnuCOBOL
+// truncates ACCEPT input to the size of a numeric DISPLAY field, only the
+// first character is kept (so "12" becomes 1); a non-digit yields 0, an
+// invalid choice.
 func ParseChoice(line string) int {
-	return money.ParseChoice(line)
+	s := strings.TrimSpace(line)
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return 0
+	}
+	return int(s[0] - '0')
 }
 
 // Run drives the menu loop, reading choices from in and writing all output
