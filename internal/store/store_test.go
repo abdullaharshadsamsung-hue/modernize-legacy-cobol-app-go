@@ -5,22 +5,29 @@ import (
 	"errors"
 	"sync"
 	"testing"
+
+	"accountsystem/internal/money"
+)
+
+const (
+	InitialBalanceCents = money.InitialBalance
+	MaxBalanceCents     = money.Max
 )
 
 type fakeStore struct {
-	readVal  int64
+	readVal  money.Amount
 	readErr  error
 	writeErr error
-	written  []int64
+	written  []money.Amount
 	reads    int
 }
 
-func (f *fakeStore) Read(ctx context.Context) (int64, error) {
+func (f *fakeStore) Read(ctx context.Context) (money.Amount, error) {
 	f.reads++
 	return f.readVal, f.readErr
 }
 
-func (f *fakeStore) Write(ctx context.Context, cents int64) error {
+func (f *fakeStore) Write(ctx context.Context, cents money.Amount) error {
 	if f.writeErr != nil {
 		return f.writeErr
 	}
@@ -29,7 +36,7 @@ func (f *fakeStore) Write(ctx context.Context, cents int64) error {
 }
 
 func TestNewMemoryStoreInitialBalance(t *testing.T) {
-	s := NewMemoryStore()
+	s := NewMemoryStore(money.InitialBalance)
 	got, err := s.Read(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -44,8 +51,8 @@ func TestNewMemoryStoreInitialBalance(t *testing.T) {
 
 type step struct {
 	op      string
-	in      int64
-	want    int64
+	in      money.Amount
+	want    money.Amount
 	wantErr error
 }
 
@@ -53,7 +60,7 @@ func TestCallSequences(t *testing.T) {
 	tests := []struct {
 		name       string
 		steps      []step
-		wantStored int64
+		wantStored money.Amount
 	}{
 		{"first READ returns 1000.00", []step{{op: "READ", in: 0, want: 100000}}, 100000},
 		{"WRITE 1250.50 leaves caller unchanged", []step{{op: "WRITE", in: 125050, want: 125050}}, 125050},
@@ -100,7 +107,7 @@ func TestCallSequences(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			s := NewMemoryStore()
+			s := NewMemoryStore(money.InitialBalance)
 			for i, st := range tc.steps {
 				bal := st.in
 				err := Call(ctx, s, st.op, &bal)
@@ -132,8 +139,8 @@ func TestCallWithFakeStore(t *testing.T) {
 		name       string
 		store      *fakeStore
 		op         string
-		in         int64
-		want       int64
+		in         money.Amount
+		want       money.Amount
 		wantErr    error
 		wantReads  int
 		wantWrites int
@@ -166,11 +173,11 @@ func TestCallWithFakeStore(t *testing.T) {
 }
 
 func TestCallNilArguments(t *testing.T) {
-	bal := int64(1)
+	bal := money.Amount(1)
 	if err := Call(context.Background(), nil, "READ", &bal); err == nil {
 		t.Fatal("expected error for nil store")
 	}
-	if err := Call(context.Background(), NewMemoryStore(), "READ", nil); err == nil {
+	if err := Call(context.Background(), NewMemoryStore(money.InitialBalance), "READ", nil); err == nil {
 		t.Fatal("expected error for nil balance")
 	}
 }
@@ -178,9 +185,9 @@ func TestCallNilArguments(t *testing.T) {
 func TestMemoryStoreWriteRange(t *testing.T) {
 	tests := []struct {
 		name    string
-		cents   int64
+		cents   money.Amount
 		wantErr bool
-		want    int64
+		want    money.Amount
 	}{
 		{"zero", 0, false, 0},
 		{"max", MaxBalanceCents, false, MaxBalanceCents},
@@ -190,7 +197,7 @@ func TestMemoryStoreWriteRange(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewMemoryStore()
+			s := NewMemoryStore(money.InitialBalance)
 			err := s.Write(context.Background(), tc.cents)
 			if tc.wantErr != errors.Is(err, ErrOutOfRange) {
 				t.Fatalf("err=%v", err)
@@ -209,7 +216,7 @@ func TestMemoryStoreWriteRange(t *testing.T) {
 func TestMemoryStoreCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s := NewMemoryStore()
+	s := NewMemoryStore(money.InitialBalance)
 	if _, err := s.Read(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("read err=%v", err)
 	}
@@ -220,24 +227,24 @@ func TestMemoryStoreCanceledContext(t *testing.T) {
 	if got != InitialBalanceCents {
 		t.Fatalf("stored=%d", got)
 	}
-	bal := int64(7)
+	bal := money.Amount(7)
 	if err := Call(ctx, s, "READ", &bal); !errors.Is(err, context.Canceled) || bal != 7 {
 		t.Fatalf("call err=%v bal=%d", err, bal)
 	}
 }
 
 func TestMemoryStoreConcurrent(t *testing.T) {
-	s := NewMemoryStore()
+	s := NewMemoryStore(money.InitialBalance)
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(2)
-		go func(v int64) {
+		go func(v money.Amount) {
 			defer wg.Done()
 			if err := s.Write(ctx, v); err != nil {
 				t.Error(err)
 			}
-		}(int64(i))
+		}(money.Amount(i))
 		go func() {
 			defer wg.Done()
 			v, err := s.Read(ctx)
