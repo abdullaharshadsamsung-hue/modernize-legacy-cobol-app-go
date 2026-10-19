@@ -7,18 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"migrated-app/internal/store"
+	"accountsystem/internal/money"
+	"accountsystem/internal/store"
 )
 
 type fakeStore struct {
-	balance  int64
+	balance  money.Amount
 	readErr  error
 	writeErr error
 	calls    []string
-	writes   []int64
+	writes   []money.Amount
 }
 
-func (f *fakeStore) Read(ctx context.Context) (int64, error) {
+func (f *fakeStore) Read(ctx context.Context) (money.Amount, error) {
 	f.calls = append(f.calls, "READ")
 	if f.readErr != nil {
 		return 0, f.readErr
@@ -26,7 +27,7 @@ func (f *fakeStore) Read(ctx context.Context) (int64, error) {
 	return f.balance, nil
 }
 
-func (f *fakeStore) Write(ctx context.Context, v int64) error {
+func (f *fakeStore) Write(ctx context.Context, v money.Amount) error {
 	f.calls = append(f.calls, "WRITE")
 	if f.writeErr != nil {
 		return f.writeErr
@@ -69,24 +70,24 @@ func TestRun(t *testing.T) {
 	tests := []struct {
 		name      string
 		op        string
-		balance   int64
+		balance   money.Amount
 		input     string
 		wantOut   string
-		wantBal   int64
+		wantBal   money.Amount
 		wantCalls []string
 		wantErr   error
 		wantRest  string
 	}{
 		{"total", "TOTAL ", 100000, "untouched\n",
-			"Current balance: 00100000\n", 100000, []string{"READ"}, nil, "untouched\n"},
+			"Current balance: 001000.00\n", 100000, []string{"READ"}, nil, "untouched\n"},
 		{"credit valid", "CREDIT", 100000, "250.00\n",
-			"Enter credit amount: \nAmount credited. New balance: 00125000\n", 125000, []string{"READ", "WRITE"}, nil, ""},
+			"Enter credit amount: \nAmount credited. New balance: 001250.00\n", 125000, []string{"READ", "WRITE"}, nil, ""},
 		{"credit overflow truncates", "CREDIT", 99999999, "1.00\n",
-			"Enter credit amount: \nAmount credited. New balance: 00000099\n", 99, []string{"READ", "WRITE"}, nil, ""},
+			"Enter credit amount: \nAmount credited. New balance: 000000.99\n", 99, []string{"READ", "WRITE"}, nil, ""},
 		{"debit equal", "DEBIT ", 100000, "1000.00\n",
-			"Enter debit amount: \nAmount debited. New balance: 00000000\n", 0, []string{"READ", "WRITE"}, nil, ""},
+			"Enter debit amount: \nAmount debited. New balance: 000000.00\n", 0, []string{"READ", "WRITE"}, nil, ""},
 		{"debit partial", "DEBIT ", 100000, "0.50\n",
-			"Enter debit amount: \nAmount debited. New balance: 00099950\n", 99950, []string{"READ", "WRITE"}, nil, ""},
+			"Enter debit amount: \nAmount debited. New balance: 000999.50\n", 99950, []string{"READ", "WRITE"}, nil, ""},
 		{"debit insufficient", "DEBIT ", 10000, "100.01\n",
 			"Enter debit amount: \nInsufficient funds for this debit.\n", 10000, []string{"READ"}, nil, ""},
 		{"lowercase unknown", "total ", 100000, "x\n", "", 100000, nil, ErrUnknownOperation, "x\n"},
@@ -162,16 +163,16 @@ func TestCreditDebitDirect(t *testing.T) {
 	tests := []struct {
 		name    string
 		debit   bool
-		balance int64
-		amount  int64
-		want    int64
+		balance money.Amount
+		amount  money.Amount
+		want    money.Amount
 		wantErr error
 		writes  int
 	}{
 		{"credit", false, 100000, 25000, 125000, nil, 1},
-		{"credit max", false, 0, store.MaxBalanceCents, store.MaxBalanceCents, nil, 1},
+		{"credit max", false, 0, money.Max, money.Max, nil, 1},
 		{"credit negative", false, 100, -1, 0, ErrInvalidAmount, 0},
-		{"credit too large", false, 100, store.MaxBalanceCents + 1, 0, ErrInvalidAmount, 0},
+		{"credit too large", false, 100, money.Max + 1, 0, ErrInvalidAmount, 0},
 		{"debit", true, 100000, 100000, 0, nil, 1},
 		{"debit insufficient", true, 10000, 10001, 10000, ErrInsufficientFunds, 0},
 		{"debit negative", true, 100, -5, 0, ErrInvalidAmount, 0},
@@ -180,7 +181,7 @@ func TestCreditDebitDirect(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &fakeStore{balance: tc.balance}
 			svc := newSvc(t, fs)
-			var got int64
+			var got money.Amount
 			var err error
 			if tc.debit {
 				got, err = svc.Debit(ctx, tc.amount)
@@ -215,22 +216,24 @@ func TestBalance(t *testing.T) {
 	}
 }
 
+// TestFormatPIC checks how a PIC 9(6)V99 balance is displayed
+// (GnuCOBOL pretty display shows the decimal point).
 func TestFormatPIC(t *testing.T) {
 	tests := []struct {
-		in   int64
+		in   money.Amount
 		want string
 	}{
-		{0, "00000000"},
-		{100000, "00100000"},
-		{125000, "00125000"},
-		{99999999, "99999999"},
-		{100000000, "00000000"},
-		{100000099, "00000099"},
-		{-1, "99999999"},
+		{0, "000000.00"},
+		{100000, "001000.00"},
+		{125000, "001250.00"},
+		{99999999, "999999.99"},
+		{100000000, "000000.00"},
+		{100000099, "000000.99"},
+		{-1, "999999.99"},
 	}
 	for _, tc := range tests {
-		if got := FormatPIC(tc.in); got != tc.want {
-			t.Errorf("FormatPIC(%d) = %q, want %q", tc.in, got, tc.want)
+		if got := tc.in.String(); got != tc.want {
+			t.Errorf("Amount(%d).String() = %q, want %q", int64(tc.in), got, tc.want)
 		}
 	}
 }
@@ -238,7 +241,7 @@ func TestFormatPIC(t *testing.T) {
 func TestParseAmount(t *testing.T) {
 	tests := []struct {
 		in   string
-		want int64
+		want money.Amount
 	}{
 		{"250.00", 25000},
 		{"250", 25000},
@@ -258,8 +261,8 @@ func TestParseAmount(t *testing.T) {
 		{"999999.99", 99999999},
 	}
 	for _, tc := range tests {
-		if got := ParseAmount(tc.in); got != tc.want {
-			t.Errorf("ParseAmount(%q) = %d, want %d", tc.in, got, tc.want)
+		if got := money.ParseAccept(tc.in); got != tc.want {
+			t.Errorf("ParseAccept(%q) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }
@@ -300,7 +303,7 @@ func TestRunOpTruncatedToSixChars(t *testing.T) {
 	if err := svc.Run(context.Background(), "TOTAL XYZ", nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "Current balance: 00000100\n" {
+	if out.String() != "Current balance: 000001.00\n" {
 		t.Errorf("out = %q", out.String())
 	}
 }
