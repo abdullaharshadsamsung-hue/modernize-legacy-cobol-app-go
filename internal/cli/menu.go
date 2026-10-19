@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"accountsystem/internal/account"
-	"accountsystem/internal/money"
 )
 
 // Operator runs one account operation identified by a 6-character COBOL
