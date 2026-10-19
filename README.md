@@ -1,40 +1,39 @@
 # Copilot COBOL Account App (Go)
 
-An interactive, menu-driven account management console. It is a migration of the COBOL `MainProgram` / `Operations` / `DataProgram` programs to Go. The program reads menu choices from standard input, writes prompts and results to standard output, and keeps a single account balance in process memory.
+An interactive, menu-driven console program for a single account balance. You can view the balance, credit it and debit it. It is a Go migration of a COBOL application made of three programs: `MainProgram`, `Operations` and `DataProgram`.
 
-This is a terminal program, not a network service. It does not open a port or serve HTTP.
+The program reads menu choices and amounts from standard input and writes results to standard output. The balance is held in process memory only. It starts at `money.InitialBalance` and resets every time the program starts, as the original COBOL run unit did. There is no database and no persistence.
 
 ## Migration status
 
-| Item | Status |
+| Check | Result |
 |---|---|
-| Modules migrated | 3 / 3 |
+| Modules migrated | 3/3 |
 | Build | Passed |
-| Target unit tests (`go test ./...`) | Passed |
-| Behaviour compared with the original COBOL program | **Inconclusive** |
-| Model self-assessed confidence | 93% (an estimate, not a measured result) |
+| Unit tests (`go test ./...`) | Passed |
+| Behavior compared with the original COBOL program | Passed, for the sessions listed under [Try it](#try-it) |
+| Model self-assessed confidence | 96%. This is the migration tool's own estimate, not a measured result. |
 
-Equivalence with the original program has not been demonstrated. See [Manual review required](#manual-review-required).
+The `Operations` and `MainProgram` modules are flagged as low confidence. See [Manual review required](#manual-review-required).
 
 ## Tech stack
 
-- **Language:** Go. The module is `accountsystem` and `go.mod` declares `go 1.23.0`.
-- **Libraries:** Go standard library (`context`, `os/signal`, `sync`, and others).
-- **Declared dependency:** `github.com/spf13/viper` v1.21.0. This dependency is listed in `go.mod`, but neither entry point shown below imports it.
-- **Storage:** In-memory only. There is no database.
+- **Language:** Go. The module `accountsystem` declares `go 1.23.0` in `go.mod`.
+- **Libraries:** standard library only, plus `github.com/spf13/viper v1.21.0`, which is listed as a direct dependency in `go.mod`. The two entry points do not use viper directly.
+- **Storage:** in-memory, in `internal/store`. No database.
 
 ## Prerequisites
 
-- A Go toolchain matching the one used during migration (the `golang:1.27-alpine` image, Go 1.27). `go.mod` requires at least Go 1.23.0.
-- Network access for `go mod download` on the first build.
+- Go toolchain. The migration was built and tested with the toolchain from the `golang:1.27-alpine` image (Go 1.27). `go.mod` requires at least Go 1.23.0.
+- Network access to the Go module proxy for the first `go mod download`.
 
-No database, container runtime, or other services are required.
+No database or other services are required.
 
 ## Getting started
 
-Run these steps from the root of a fresh clone.
+Run all commands from the root of a fresh clone.
 
-### 1. Install dependencies and build
+### 1. Download dependencies and build
 
 ```sh
 mkdir -p bin
@@ -42,13 +41,15 @@ go mod download
 go build -o bin/app ./cmd/app
 ```
 
+This produces the `bin/app` binary from `cmd/app`. That is the entry point used for verification.
+
 ### 2. Environment setup
 
-No environment setup is required to run the program. See [Environment variables](#environment-variables).
+None is required. See [Environment variables](#environment-variables) for why the variables listed by the migration run are not needed.
 
 ### 3. Database setup
 
-None. The balance lives in memory and resets each time the process starts. No schema is created.
+None. The balance is kept in memory, and the original COBOL program had no database either.
 
 ### 4. Run
 
@@ -56,19 +57,51 @@ None. The balance lives in memory and resets each time the process starts. No sc
 ./bin/app
 ```
 
-The program shows a menu on the terminal and waits for input. Enter `4` to exit. The program then prints `Exiting the program. Goodbye!` and exits with status 0. Sending end-of-input (Ctrl-D) at the menu prompt has the same effect.
+The program is an interactive console. It does **not** open a network port.
 
-There is no port to connect to and no HTTP request to try. No sample sessions have been verified against the original program.
+The migration run's metadata stated "listens on port 8080", but it recorded no run command. Neither `cmd/app/main.go` nor `cmd/accountsystem/main.go` starts a server. Both read from stdin and write to stdout.
 
-#### Alternative entry point
+Choose `4` at the menu, or send end-of-input (Ctrl-D), to exit.
 
-The repository contains a second entry point, `cmd/accountsystem`. It runs the same console, but it also handles Ctrl-C (SIGINT) and exits with status 130 when interrupted.
+### Try it
 
-```sh
-go run ./cmd/accountsystem
+The migration verified the following sessions against the original program. Each one runs with no arguments and exits with status `0`. The verified inputs, exactly as recorded, are:
+
+```
+{"args": [], "stdin": "1\n4\n"}
+{"args": [], "stdin": "2\n500.00\n1\n4\n"}
+{"args": [], "stdin": "3\n200.00\n1\n4\n"}
+{"args": [], "stdin": "3\n1000.00\n1\n4\n"}
+{"args": [], "stdin": "3\n1500.00\n1\n4\n"}
+{"args": [], "stdin": "9\n0\n4\n"}
 ```
 
-The migration run did not build or exercise this entry point. Only `./cmd/app` was built.
+To reproduce them from the shell, pipe the stdin string into the binary and check the exit code:
+
+```sh
+printf '1\n4\n' | ./bin/app; echo "exit: $?"
+printf '2\n500.00\n1\n4\n' | ./bin/app; echo "exit: $?"
+printf '3\n200.00\n1\n4\n' | ./bin/app; echo "exit: $?"
+printf '3\n1000.00\n1\n4\n' | ./bin/app; echo "exit: $?"
+printf '3\n1500.00\n1\n4\n' | ./bin/app; echo "exit: $?"
+printf '9\n0\n4\n' | ./bin/app; echo "exit: $?"
+```
+
+In these sessions:
+
+- `1` shows the balance.
+- `2` and `3` each prompt for an amount (credit and debit), which is entered on the next line.
+- `4` exits.
+- `9` exercises the invalid-choice path.
+
+### Alternative entry point
+
+`cmd/accountsystem` runs the same console. It also handles Ctrl-C (SIGINT): it cancels the session and exits with status `130`. Build and run it with:
+
+```sh
+go build -o bin/accountsystem ./cmd/accountsystem
+./bin/accountsystem
+```
 
 ## Running tests
 
@@ -76,7 +109,7 @@ The migration run did not build or exercise this entry point. Only `./cmd/app` w
 go test ./...
 ```
 
-Test files:
+Tests live next to the code they cover:
 
 - `internal/account/service_test.go`
 - `internal/cli/menu_test.go`
@@ -85,84 +118,84 @@ Test files:
 
 ## Environment variables
 
-The migration sandbox defined the following variables. Neither entry point reads them, and `internal/store/store.go` states that no database is involved. You do not need to set them to run the program.
+The migration run's sandbox listed the following variables. None of them is read by either entry point (`cmd/app/main.go`, `cmd/accountsystem/main.go`) or by `internal/store/store.go`.
 
-| Variable | Used by the code shown | Notes |
+| Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | No | No database is used. The balance is held in memory. |
-| `PORT` | No | The program is a stdin/stdout console and does not listen on a port. |
-| `JWT_SECRET` | No | No authentication is implemented. |
-
-Before relying on this table, confirm that nothing under `internal/` reads these variables, for example through `viper`.
+| `DATABASE_URL` | No | Not used. The app has no database. The store is in-memory. |
+| `PORT` | No | Not used. The app is a stdin/stdout console and does not listen on a port. |
+| `JWT_SECRET` | No | Not used. There is no authentication. |
 
 ## Architecture overview
 
 ```
 cmd/
-  app/main.go            Entry point built by the install step (bin/app)
-  accountsystem/main.go  Same wiring, plus SIGINT handling (exit code 130)
+  app/main.go            Entry point used for verification: wires store -> service -> CLI
+  accountsystem/main.go  Same wiring plus Ctrl-C handling (exit 130)
 internal/
-  account/service.go     Account operations service (built on a BalanceStore)
-  cli/menu.go            Interactive menu loop: Run(ctx, stdin, stdout, svc)
-  money/money.go         money.Amount type, InitialBalance, range validation
-  store/store.go         BalanceStore interface and in-memory implementation
+  money/                 Money amount type and InitialBalance
+  store/                 Balance storage (replaces COBOL DataProgram)
+  account/               Account operations service (replaces COBOL Operations)
+  cli/                   Interactive menu loop (replaces COBOL MainProgram)
 ```
 
-**Wiring.** Both entry points follow the same sequence:
+### Startup wiring
 
-1. Create `store.NewMemoryStore(money.InitialBalance)`.
-2. Wrap the store in `account.NewService`.
-3. Hand the service to `Run` in `internal/cli/menu.go` along with stdin and stdout.
+Both entry points create the components in the same order:
 
-Errors are printed to stderr and produce exit status 1.
+1. `store.NewMemoryStore(money.InitialBalance)` creates the balance store.
+2. `account.NewService(balances)` builds the account service on top of the store.
+3. `cli.Run(ctx, os.Stdin, os.Stdout, svc)` runs the menu loop until the user exits.
 
-**`internal/store`.** This package replaces the COBOL `DataProgram` subprogram and its `WORKING-STORAGE` balance:
+### Package responsibilities
 
-- `MemoryStore` is guarded by a mutex and implements `Read` and `Write`.
-- `Write` rejects any value outside the `PIC 9(6)V99` range (0 to 999999.99) with `ErrOutOfRange` and leaves the stored balance unchanged.
-- `store.Call(ctx, s, op, &balance)` reproduces the COBOL `CALL 'DataProgram' USING op, balance` interface. Only the first six characters of `op` are significant and trailing spaces are ignored, matching `PIC X(6)`. `"READ"` copies the stored balance out and `"WRITE"` stores it. Any other code does nothing and returns `nil`, as in the original.
-
-**Mapping from COBOL.** `DataProgram` maps to `internal/store`. `Operations` and `MainProgram` appear to correspond to `internal/account` and `internal/cli`.
+- **`internal/money`**
+  - Defines the amount type in `internal/money/money.go`, an integer count of cents that models COBOL `PIC 9(6)V99`.
+  - Defines `InitialBalance`.
+  - Provides `Amount.Valid()`, which checks the range `0..999999.99`.
+- **`internal/store`**
+  - Defines the `BalanceStore` interface, with `Read` and `Write`.
+  - `MemoryStore` is a mutex-protected, in-memory implementation.
+  - `Write` rejects out-of-range values with `ErrOutOfRange` and leaves the stored balance unchanged.
+  - `internal/store/store.go` also reproduces the COBOL `CALL 'DataProgram' USING op, balance` interface:
+    - The operation code is treated like `PIC X(6)`: only the first six characters count and trailing spaces are trimmed.
+    - `READ` and `WRITE` are supported.
+    - Unknown codes are a no-op.
+- **`internal/account`**
+  - Implements the account operations (view, credit, debit) against a `BalanceStore`.
+- **`internal/cli`**
+  - Implements the menu prompt, input parsing and output.
+  - Takes an `io` reader and writer and a context, which makes it testable without a terminal.
 
 ## Migration notes
 
-The original COBOL program used no database (`cobol/none`), and neither does the Go version. The balance is still held only for the lifetime of the process, mirroring the COBOL run unit.
+The original was COBOL with no framework (`MainProgram`, `Operations`, `DataProgram`). The target is standard-library Go.
 
-Changes from the original:
+| Change | Reason |
+|---|---|
+| End of input (EOF) at the menu prompt is treated as choice `4`. The program prints `Exiting the program. Goodbye!` and exits with status `0`. The original GnuCOBOL program leaves `USER-CHOICE` unchanged on EOF and loops forever. | Deliberate deviation in the migration plan. The original's EOF behavior is an infinite loop, so the Go version ends the session cleanly instead. |
+| The in-memory store's `Write` (in `internal/store/store.go`) validates the amount and returns `ErrOutOfRange` for values outside `0..999999.99`. It does not silently truncate. | In COBOL the caller's field shared the same `PIC`, so an out-of-range value could never reach `DataProgram`. Go callers can pass any value, so the range is checked explicitly. This is recorded as a `MIGRATION_NOTE` in `internal/store/store.go`. |
+| `DataProgram`'s `WORKING-STORAGE` balance became an in-memory `MemoryStore` behind a `BalanceStore` interface. | Keeps the original semantics: process-local storage that resets on restart. The interface lets the service be tested in isolation. |
+| `cmd/accountsystem` exits with status `130` on Ctrl-C. | Go-side addition for clean interrupt handling. The original had no equivalent. |
 
-1. **EOF at the menu prompt exits cleanly.**
-   - **Change:** End of input at the menu prompt is treated as choice 4. The program prints `Exiting the program. Goodbye!` and exits with status 0. The original GnuCOBOL program left `USER-CHOICE` unchanged on EOF and looped forever.
-   - **Reason:** This was a deliberate deviation in the migration plan. The original's EOF behaviour is an infinite loop, so the Go version ends the session cleanly instead.
-
-2. **Explicit range check on balance writes.**
-   - **Change:** The `Write` method of `MemoryStore` in `internal/store/store.go` validates the amount and returns `ErrOutOfRange` for values outside 0 to 999999.99.
-   - **Reason:** This is documented as a `MIGRATION_NOTE` in `internal/store/store.go`. In COBOL, the caller's field shared the same PIC, so an out-of-range value could never reach the store. Go callers can pass any value, so the store validates explicitly instead of truncating silently.
+**Database:** unchanged. Neither the original nor the migrated version uses a database.
 
 ## Known limitations
 
-- **Behavioural equivalence is unverified.** The comparison against the original COBOL program was inconclusive, and no input/output sessions have been confirmed to match.
-- **No persistence.** The balance resets to `money.InitialBalance` on every start. This matches the original but may surprise users who expect saved state.
-- **Two entry points.** `cmd/app` and `cmd/accountsystem` are near-duplicates. Only `cmd/app` was built during migration.
-- **Unused dependency and configuration.** `viper` is declared in `go.mod`, and `DATABASE_URL`, `PORT` and `JWT_SECRET` were set in the sandbox, but the entry code shown uses none of them.
-
-No components were left untranslated and none were marked unmigratable.
+- **Behavior coverage is limited.** Equivalence with the original was compared only for the six sessions listed under [Try it](#try-it). Other inputs are covered only by the unit tests and have not been compared against the COBOL program. Examples include malformed amounts, amounts with more than two decimals, and balances near `999999.99`.
+- **No persistence.** The balance resets to `money.InitialBalance` on every start, matching the original.
+- **Single user.** One process holds one balance.
+- **Misleading run metadata.** The migration run's environment listed `DATABASE_URL`, `PORT` and `JWT_SECRET`, and claimed the app listens on port 8080. The code does not support any of this. Do not deploy it as a network service.
+- **Two entry points.** `cmd/app` and `cmd/accountsystem` duplicate the same wiring. Only `cmd/app` was used for build and behavior verification.
 
 ## Manual review required
 
-Review these items before treating this migration as complete:
+| Original module | Go code to review | What to check |
+|---|---|---|
+| `Operations` (low confidence) | `internal/account/service.go` | Credit and debit arithmetic, rounding, and the insufficient-funds path. The verified debits of `1000.00` and `1500.00` exercise boundary cases. Also check output wording against the COBOL `DISPLAY` statements. |
+| `MainProgram` (low confidence) | `internal/cli/menu.go` | Menu text, prompts, invalid-choice handling (`9` was verified), amount parsing, and the EOF-as-exit deviation. |
 
-- **Low-confidence modules from the original COBOL `Operations` and `MainProgram` programs.** Their Go counterparts appear to be:
-  - `internal/account/service.go` (from `Operations`)
-  - `internal/cli/menu.go` (from `MainProgram`)
+Also check the following:
 
-  Check the following against the original programs:
-  - menu text and option numbering
-  - credit and debit arithmetic and rounding
-  - insufficient-funds handling
-  - output formatting of amounts
-  - handling of invalid menu input
-- **`internal/money/money.go`.** Confirm that `InitialBalance` and the `PIC 9(6)V99` validity rules match the original data definitions.
-- **EOF behaviour in `internal/cli/menu.go`.** Confirm that the intentional deviation described in the migration notes is implemented as stated.
-- **Entry points.** Decide whether to keep both `cmd/app/main.go` and `cmd/accountsystem/main.go` or consolidate them.
-- **`go.mod`.** Confirm whether `github.com/spf13/viper` is needed. Remove it if not.
-- **Side-by-side behaviour testing.** Run the same input scripts through the original COBOL program and through `./bin/app`, and compare the output. This verification is still missing.
+- **`go.mod`:** confirm whether `github.com/spf13/viper` is actually needed. Neither entry point imports it. If no package uses it, remove it with `go mod tidy`.
+- **`cmd/app/main.go` vs `cmd/accountsystem/main.go`:** decide which entry point to keep.
