@@ -15,8 +15,12 @@ import (
 	"io"
 	"strings"
 
-	"migrated-app/internal/store"
+	"accountsystem/internal/money"
+	"accountsystem/internal/store"
 )
+
+// maxBalanceCents is the largest value PIC 9(6)V99 can hold (999999.99).
+const maxBalanceCents = int64(money.Max)
 
 // Operation codes, matching the COBOL PASSED-OPERATION PIC X(6) values
 // (trailing spaces are insignificant).
@@ -27,7 +31,7 @@ const (
 )
 
 // picModulus is 10^8: PIC 9(6)V99 holds 8 decimal digits of cents.
-const picModulus = store.MaxBalanceCents + 1
+const picModulus = maxBalanceCents + 1
 
 // ErrInsufficientFunds is returned by Debit when the balance is lower than
 // the requested amount. The stored balance is left unchanged.
