@@ -1,4 +1,4 @@
-module migrated-app
+module accountsystem
 
 go 1.23
 
