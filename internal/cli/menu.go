@@ -11,7 +11,7 @@ import (
 	"io"
 	"strings"
 
-	"migrated-app/internal/account"
+	"accountsystem/internal/account"
 )
 
 // Operator runs one account operation identified by a 6-character COBOL
