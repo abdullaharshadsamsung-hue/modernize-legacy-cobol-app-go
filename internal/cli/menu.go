@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"accountsystem/internal/account"
+	"accountsystem/internal/money"
 )
 
 // Operator runs one account operation identified by a 6-character COBOL
@@ -55,23 +55,15 @@ var menuLines = []string{
 }
 
 // ParseChoice converts one input line into the value ACCEPT would store in
-// "USER-CHOICE PIC 9". Surrounding blanks are ignored and the first
-// character is used; anything that is not a digit yields 0, which is an
-// invalid choice.
+// "USER-CHOICE PIC 9". It delegates to money.ParseChoice: surrounding
+// blanks are ignored and the low-order digit of numeric input is kept
+// (so "12" becomes 2); non-numeric input yields 0, an invalid choice.
 //
 // MIGRATION_NOTE: GnuCOBOL's ACCEPT conversion of multi-character or
 // malformed input into a PIC 9 field is runtime-dependent; this
 // approximation must be verified against the golden transcripts.
 func ParseChoice(line string) int {
-	s := strings.TrimSpace(line)
-	if s == "" {
-		return 0
-	}
-	c := s[0]
-	if c < '0' || c > '9' {
-		return 0
-	}
-	return int(c - '0')
+	return money.ParseChoice(line)
 }
 
 // Run drives the menu loop, reading choices from in and writing all output
